@@ -34,17 +34,11 @@ struct addrinfo **res;
 int sock = 0;
 int client_sock = 0;
 int tcp;
+extern const int response_size;
 
 int cleanup(){
-	if(client_sock != 0){
-		if(-1 == close(client_sock)){
-			fprintf(stderr, "Error[21]:"
-					" Failed to close server-client socket connection\n"
-					"\t'%s'", strerror(errno));
-			return -21;
-		}
-	}
 
+	printf("Server exiting...\n");
 	if(sock != 0){
 		
 		if(-1 == close(sock)){
@@ -53,6 +47,17 @@ int cleanup(){
 			return -22;
 		}
 	}	
+
+	if(client_sock != 0){
+		if(-1 == close(client_sock)){
+			fprintf(stderr, "Error[21]:"
+					" Failed to close server-client socket connection\n"
+					"\t'%s'", strerror(errno));
+			return -21;
+		}
+	}
+	fflush(stdout);
+	fflush(stderr);
 	freeaddrinfo(*res);
 	return 0;
 }
@@ -141,6 +146,26 @@ int setup(){
 
 	printf("Server IP: %s\nServer Port: %s\n", 
 			IPbuffer, service);
+	fflush(stdout);
+
+	if(-1 == listen(sock, 10)){
+		fprintf(stderr, "Error[15]: Failed to listen for incoming connections\n"
+				"\t'%s'\n", strerror(errno));
+		return -14;
+	}
+
+	struct sockaddr_storage response_addr;
+	socklen_t addrlen = sizeof(response_addr);
+	
+	client_sock = accept(sock, (struct sockaddr *)&response_addr, 
+				&addrlen);
+	if(-1 == client_sock){
+		fprintf(stderr, "Error[16]: Failed to accept incoming connection\n"
+				"\t'%s'\n", strerror(errno));
+		cleanup();
+		return -15;
+	}
+
 	return 0;
 }
 
@@ -148,64 +173,53 @@ int lookup(char * request, char ** response){
 	char * outstr;
 	if( 0 == strncmp(request, "mon", 10) || 
 			0 == strncmp(request, "monday", 10)){
-		outstr = "1234\0";
+		outstr = "\t\t12\t\t34\0";
 	}
 	else if( 0 == strncmp(request, "tues", 10) ||
 			0 == strncmp(request, "tuesday", 10) ){
-		outstr = "5678\0";
+		outstr = "\t\t56\t\t78\0";
 	}
 	else if( 0 == strncmp(request, "wed", 10) || 
 			0 == strncmp(request, "wednesday", 10) ){
-		outstr = "9101\0";
+		outstr = "\t\t91\t\t01\0";
 	}
 	else if( 0 == strncmp(request, "thurs", 10) ||
 			0 == strncmp(request, "thursday", 10) ){
-		outstr = "1121\0";
+		outstr = "\t\t11\t\t21\0";
 	}
 	else if ( 0 == strncmp(request, "fri", 10) ||
 			0 == strncmp(request, "friday", 10)	){
-		outstr = "3141\0";
+		outstr = "\t\t31\t\t41\0";
 	}
 	else if ( 0 == strncmp(request, "sat", 10) ||
 			0 == strncmp(request, "saturday", 10) ){
-		outstr = "5161\0";
+		outstr = "\t\t51\t\t61\0";
 	}
 	else if ( 0 == strncmp(request, "sun", 10) ||
 			0 == strncmp(request, "sunday", 10)	){
-		outstr = "7181\0";
+		outstr = "\t\t71\t\t81\0";
 	}
 	else if ( 0 == strncmp(request, "q", 10) || 
 			0 == strncmp(request, "quit", 10)){
 		return 1;
 	}
 	else{
+		memset(*response, '\0', strlen(*response));
+		strncpy(*response, 
+				"invalid server request\n", 
+				strlen("invalid server request\n")+1);
+
 		fprintf(stderr, "Error[14]: invalid request ('%s')\n", request);
 		return -14;
 	}
-	strncpy(*response, outstr, 20);
+	strncat(*response, outstr, strlen(outstr));
 	return 0;
 }
 
 int serve(){
 	int should_close = 1;
-	struct sockaddr_storage response_addr;
 
 	while(1 == should_close){
-		if(-1 == listen(sock, 10)){
-			fprintf(stderr, "Error[15]: Failed to listen for incoming connections\n"
-					"\t'%s'\n", strerror(errno));
-			return -14;
-		}
-
-		socklen_t addrlen = sizeof(response_addr);
-		client_sock = accept(sock, (struct sockaddr *)&response_addr, 
-					&addrlen);
-		if(-1 == client_sock){
-			fprintf(stderr, "Error[16]: Failed to accept incoming connection\n"
-					"\t'%s'\n", strerror(errno));
-			cleanup();
-			return -15;
-		}
 
 		char  request[10];
 		memset(request, '\0', 10);
@@ -217,20 +231,21 @@ int serve(){
 		else{
 			result = recvfrom_w_err(client_sock, (void*)request, 10);
 		}
+
+		printf("Server received %s request\n", request);
 		
 		if(result == 0){
-			char * response = malloc(sizeof(char) * 4); 
+			char * response = malloc(sizeof(char) * response_size); 
+	
+			strncpy(response, "Temperature(deg. C)\tPrecipitation\n",
+					strlen("Temperature(deg. C)\tPrecipitation\n") + 1);
+			
 			result = lookup(request, &response);
-		
+
+
 			if( 1 == result ){
 				printf("Server exiting...\n");
 				return cleanup();
-			}
-
-			else if ( 0 != result ){
-				fprintf(stderr, "Server exiting on error...\n");
-				cleanup();
-				return result;
 			}
 
 			int len = strlen(response);
@@ -241,8 +256,9 @@ int serve(){
 			else{
 				sendto_w_err(client_sock, 
 						response, len,
-						(*res)->ai_addr, (*res)->ai_addrlen);
+						NULL, 0);
 			}
+			memset(response, '\0', response_size);
 		}
 	}
 	return 0;

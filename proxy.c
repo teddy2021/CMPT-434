@@ -32,7 +32,8 @@ char *service;
 struct addrinfo *hints;
 struct addrinfo **res;
 int serv_sock = 0, sock = 0, client_sock = 0;
-
+int tcp;
+extern const int response_size, offset;
 
 int cleanup(){
 	if(client_sock != 0){
@@ -44,6 +45,14 @@ int cleanup(){
 		}
 	}
 
+	if(serv_sock != 0){
+		if(-1 == close(serv_sock)){
+			fprintf(stderr, "Error[25]:"
+					" Failed to close proxy-server connection\n"
+					"\t'%s'\n", strerror(errno));
+			return -25;
+		}
+	}
 	if(sock != 0){
 		
 		if(-1 == close(sock)){
@@ -53,14 +62,9 @@ int cleanup(){
 		}
 	}
 
-	if(serv_sock != 0){
-		if(-1 == close(serv_sock)){
-			fprintf(stderr, "Error[25]:"
-					" Failed to close proxy-server connection\n"
-					"\t'%s'\n", strerror(errno));
-			return -25;
-		}
-	}
+	fflush(stdout);
+	fflush(stderr);
+
 	freeaddrinfo(*res);
 	return 0;
 }
@@ -70,10 +74,16 @@ int setup(){
 	hints = (struct addrinfo *)malloc(sizeof(struct addrinfo));
 	memset(hints, 0, sizeof(*hints));
 	hints->ai_family = AF_UNSPEC;
-	hints->ai_socktype = SOCK_STREAM;
+	if(0 == tcp){ 
+		hints->ai_socktype = SOCK_STREAM;
+	}
+	else{
+		hints->ai_socktype = SOCK_DGRAM;
+	}
 	hints->ai_flags = AI_PASSIVE;
 
 
+	// get server info
 	int result = getaddrinfo(node, service, hints, res);
 	
 	if(0 != result){
@@ -102,24 +112,15 @@ int setup(){
 
 	}
 
-	// obtain a socket to self
-	sock = socket((*res)->ai_family, (*res)->ai_socktype, (*res)->ai_protocol);
+
+	// obtain a socket to server
+	serv_sock = socket((*res)->ai_family, (*res)->ai_socktype, (*res)->ai_protocol);
 	if(-1 == sock){
 		fprintf(stderr, "Error[27]: could not create host socket\n"
 				"\t'%s'\n", strerror(errno));
 		cleanup();
 		return -27;
 	}
-
-	char hostbuffer[256], *IPbuffer;
-	struct hostent * host_entry;
-
-	gethostname(hostbuffer, sizeof(hostbuffer));
-	host_entry = gethostbyname(hostbuffer);
-	IPbuffer = inet_ntoa(*((struct in_addr*) host_entry->h_addr_list[0]));
-
-	printf("Proxy IP: %s\nProxy Port: %s\n", 
-			IPbuffer, service);
 
 	int serv_val = atoi(service);
 	sprintf(service, "%d", serv_val + 1);
@@ -132,6 +133,17 @@ int setup(){
 		return -28;
 
 	}
+	
+	char hostbuffer[256], *IPbuffer;
+	struct hostent * host_entry;
+
+	gethostname(hostbuffer, sizeof(hostbuffer));
+	host_entry = gethostbyname(hostbuffer);
+	IPbuffer = inet_ntoa(*((struct in_addr*) host_entry->h_addr_list[0]));
+
+	printf("Proxy IP: %s\nProxy Port: %s\n", 
+			IPbuffer, service);
+	fflush(stdout);
 
 	for(p = *res; p != NULL; p = p->ai_next){
 		void *addr;
@@ -182,23 +194,31 @@ int setup(){
 
 int lookup(char * req){
 	if(
-			0 == (strncmp(req, "mon", 10) || strncmp(req, "monday", 10))
-			|| 0 == (strncmp(req, "tues", 10) || strncmp(req, "tuesday", 10))
-			|| 0 == (strncmp(req, "wed", 10) || strncmp(req, "wednesday", 10))
-			|| 0 == (strncmp(req, "thurs", 10) || strncmp(req, "thursday", 10))
-			|| 0 == (strncmp(req, "fri", 10) || strncmp(req, "friday", 10))
-			|| 0 == (strncmp(req, "sat", 10) || strncmp(req, "saturday", 10))
-			|| 0 == (strncmp(req, "sun", 10) || strncmp(req, "sunday", 10))
+			   0 == strncmp(req, "mon", 10) 
+			|| 0 == strncmp(req, "monday", 10)
+			|| 0 == strncmp(req, "tues", 10) 
+			|| 0 == strncmp(req, "tuesday", 10)
+			|| 0 == strncmp(req, "wed", 10) 
+			|| 0 == strncmp(req, "wednesday", 10)
+			|| 0 == strncmp(req, "thurs", 10) 
+			|| 0 == strncmp(req, "thursday", 10)
+			|| 0 == strncmp(req, "fri", 10) 
+			|| 0 == strncmp(req, "friday", 10)
+			|| 0 == strncmp(req, "sat", 10) 
+			|| strncmp(req, "saturday", 10)
+			|| 0 == strncmp(req, "sun", 10) 
+			|| strncmp(req, "sunday", 10)
 	  ){
 		return 1;
 	}
 	else if(
-			0 == (strncmp(req, "a", 10) || strncmp(req, "all", 10))
-		   ){
+			0 == strncmp(req, "a", 10) ||
+		    0 == strncmp(req, "all", 10)){
 		return 2;
 	}
 	else if(
-			0 == (strncmp(req, "q", 10) || strncmp(req, "quit", 10))
+			0 == strncmp(req, "q", 10) || 
+			0 == strncmp(req, "quit", 10)
 		   ){
 		return 3;
 	}
@@ -229,10 +249,23 @@ int serve(){
 			cleanup();
 			return -33;
 		}
+
+		if(-1 == connect(serv_sock, (*res)->ai_addr, (*res)->ai_addrlen)){
+			fprintf(stderr,"Error[27.2]: could not connect to server\n"
+					"\t'%s'\n", strerror(errno));
+			cleanup();
+			return -27;
+		}
 		// create a buffer for incoming requests
 		char  request[10];
 		memset(request, '\0', 10);
-		int result = recv_w_err(client_sock, request, 10);
+		int result;
+		if(0 == tcp){
+			result = recv_w_err(client_sock, request, 10);
+		}
+		else{
+			result = recvfrom_w_err(client_sock, request, 10);
+		}
 		if(-1 != result){
 			// check the request for 1 of 4 conditions
 			// 3: q/quit
@@ -244,12 +277,22 @@ int serve(){
 			
 			// exit condition
 			if( 3 == result ){
-				printf("Server exiting...\n");
+				printf("Proxy exiting...\n");
 				len = strlen(request);
 
 				// pass on the exit message to true server, and cleanup
-				result = send_w_err(serv_sock, request, len);
+				if(0 == tcp){
+					printf("Sending quit signal to server...\n");
+					result = send_w_err(serv_sock, request, len);
+				}
+				else{
+					printf("Sending quit signal to server...\n");
+					result = sendto_w_err(serv_sock, request, len, 
+							NULL, 0);
+				}
 				if( -1 == result ){
+					fprintf(stderr, "Error[36]: Failed to send quit signal from"
+							" proxy to server\n\t'%s'\n", strerror(errno));
 					cleanup();
 					return -36;
 				}
@@ -263,27 +306,28 @@ int serve(){
 				char *days[7] = {
 					"mon", "tues", "wed", "thurs", "fri", "sat", "sun"
 				};
-				char * response = (char *)(malloc(sizeof(char)*
-							strlen("\tTemperature(deg. C)\tPrecipitation\n\0")
-							+ 6*7 // temp/precip values 
-							// ^ len = 4, +2/day for tabs, +1/day for null
-							+ 4*5 // 5 days with length 3 abbv. +1/day for null
-							+ 5*2 // 2 days with length 4 abbv. +1/day for null)
-							+ 7 // add additional space for newlines
-						));
+				char * response = (char *)malloc(sizeof(char)*response_size);
 
-				memcpy(response, "\tTemperature(deg. C)\tPrecipitation\n\0",
-						strlen("\tTemperature(deg. C)\tPrecipitation\n\0"));
-
+				memset(response, '\0', response_size);
+				strncpy(response, "Temperature(deg. C)\tPrecip\n", 
+						strlen("Temperature(deg. C)\tPrecip\n")+1);
+				int r_length = strlen("temperature(deg.c)\tprecip\n\0")+9;
+				char  * temp = (char *)malloc(sizeof(char)*r_length +1);
 				// iterate through days and obtain weather
 				for(int i = 0; i < 7; i += 1){
 
 					len = strlen(days[i]);
-					char  temp[5] = {"\0"};
+					memset(temp, '\0', r_length +1);
 
 
 					// request for ith day of week weather
-					result = send_w_err(serv_sock, days[i], len);
+					if(0 == tcp){
+						result = send_w_err(serv_sock, days[i], len);
+					}
+					else{
+						result = sendto_w_err(serv_sock, days[i], len,
+								NULL, 0);
+					}
 					if( -1 == result ){
 						fprintf(
 								stderr, 
@@ -292,7 +336,12 @@ int serve(){
 					}
 
 					// obtain and buffer result
-					result = recv_w_err(serv_sock, temp, 4);
+					if(0 == tcp){
+						result = recv_w_err(serv_sock, temp, response_size);
+					}
+					else{
+						result = recvfrom_w_err(serv_sock, temp, response_size);
+					}
 					if(-1 == result){
 						fprintf(stderr,
 								"Error[37.%d]: Failed to receive server response"
@@ -301,12 +350,11 @@ int serve(){
 					}
 
 					else{
-						strncat(response, "\n", 2); 
-						strncat(response, days[i], strlen(days[i]));
-						strncat(response, "\t", 2);
-						strncat(response, temp, 2);
-						strncat(response, "\t", 2);
-						strncat(response, &(temp[2]), 2);
+						strncat(response, days[i], strlen(days[i]) + 1);
+						strncat(response, "\n", 4);
+						strncat(response, temp, 5);
+						strncat(response, "\t\t", 4);
+						strncat(response, &(temp[4]), 5);
 
 						//above results in response at this iteration 'idx'having
 						// '\n$day\t$temp\t$precip' added to the buffer
@@ -314,6 +362,15 @@ int serve(){
 				}
 
 				// send response to client
+				if(0 == tcp){
+					result = send_w_err(client_sock, 
+							response, strlen(response));
+				}
+				else{
+					result = sendto_w_err(client_sock, 
+							response, strlen(response),
+							NULL, 0);
+				}
 				if(-1 == send_w_err(client_sock, response, strlen(response))){
 					fprintf(stderr, 
 							"Error[38]: Failed to send all response to client\n"
@@ -325,12 +382,21 @@ int serve(){
 
 			// passthrough condition
 			else if(1 == result){
-				char * response = (char *)malloc(sizeof(char) * 5);
-				result = send_w_err(
+				char * response = (char *)malloc(sizeof(char) * response_size);
+				if(0 == tcp){
+					result = send_w_err(
 						serv_sock, 
 						request,
 						strlen(request)
 						);
+				}
+				else{
+					result = sendto_w_err(serv_sock, 
+							request,
+							strlen(request), 
+							NULL,
+							0);
+				}
 				if(-1 == result){
 
 					fprintf(stderr, 
@@ -340,8 +406,14 @@ int serve(){
 				}
 				else{
 
-					result = recv_w_err(serv_sock, response, 4);
-
+					if(0 == tcp){
+						result = recv_w_err(serv_sock, 
+								response, response_size);
+					}
+					else{
+						result = recvfrom_w_err(serv_sock, 
+								response, response_size);
+					}
 					if(-1 == result){
 						fprintf(stderr,
 								"Error[39]: Failed to receive passthrough"
@@ -349,8 +421,16 @@ int serve(){
 								strerror(errno));
 					}
 					else{
-						result = send_w_err(
+						if(0 == tcp){
+							result = send_w_err(
 								client_sock, response, strlen(response));
+						}
+						else{
+							result = sendto_w_err(
+									client_sock, response, strlen(response),
+									NULL, 0
+									);
+						}
 
 						if(-1 == result){
 							fprintf(stderr,
@@ -367,9 +447,16 @@ int serve(){
 			}	
 			// erroneous condition
 			else if ( -1 == result ){
-				fprintf(stderr, "Server exiting on error...\n");
-				cleanup();
-				return result;
+				fprintf(stderr, "Erroneous request sent\n");
+				if(0==tcp){
+					send_w_err(client_sock, "Erroneous request\n",
+							strlen("Erroneous request\n"));
+				}
+				else{
+					sendto_w_err(client_sock, "Erroneous request\n",
+							strlen("Erroneous request\n"),
+							NULL, 0);
+				}
 			}
 
 		}
@@ -381,7 +468,7 @@ int serve(){
 
 int main(int argc, char * argv[]){
 
-	if(3 != argc){
+	if(4 != argc){
 		fprintf(stderr, "Error[-2]: Invalid number of arguments provided to Proxy\n"
 				"\tPlease input Server IP and Port in that order\n");
 		return 2;
@@ -389,9 +476,18 @@ int main(int argc, char * argv[]){
 
 	node = (char*)malloc(sizeof(char)*strlen(argv[1]));
 	service = (char*)malloc(sizeof(char)*strlen(argv[2]));
-
+	char *flag = (char *)malloc(sizeof(char)*strlen(argv[3]));
+	
 	strncpy(node, argv[1], strlen(argv[1]));
 	strncpy(service, argv[2], strlen(argv[2]));
+	strncpy(flag, argv[3], strlen(argv[3]));
+
+	if(0 == strncmp(flag, "-T", 3)){
+		tcp = 0;
+	}
+	else{
+		tcp = 1;
+	}
 
 	int result = setup();
 	if(0 != result){

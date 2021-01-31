@@ -30,17 +30,12 @@ char *node;
 char *service;
 struct addrinfo *hints;
 struct addrinfo **res;
-int response_size = 
-	strlen("Temperature(deg. C)\tPrecipitation\n")
-	+ 7 * 3 // 7 newlines and 14 tabs
-	+ 5 * 4 // 5 three letter abbvs + 1 null character each
-	+ 2 * 5 // 2 four letter abbvs + 1 null character each
-	+ 7 * 4; // 7 four character sequences of responses
+extern const int response_size;
 int tcp;
 int sock;
 
 
-void setup(){
+int setup(){
 	res = (struct addrinfo **)malloc(sizeof(struct addrinfo*));
 	hints = (struct addrinfo *)malloc(sizeof(struct addrinfo));
 	memset(hints, 0, sizeof(*hints));
@@ -52,10 +47,7 @@ void setup(){
 		hints->ai_socktype = SOCK_DGRAM;
 	}
 	hints->ai_flags = AI_PASSIVE;
-
-}
-
-int connect_and_request(char * input, char ** response_buffer){
+	
 	int result = getaddrinfo(node, service, hints, res);
 	
 	if(0 != result){
@@ -98,19 +90,24 @@ int connect_and_request(char * input, char ** response_buffer){
 		return -6;
 	}
 
+	return 0;
+
+}
+
+int connect_and_request(char * input, char ** response_buffer){
 	if(0 == tcp){
-		result = send_w_err(sock, (void*)input, strlen(input));
+		send_w_err(sock, (void*)input, strlen(input));
 	}
 	else{
-		result = sendto_w_err(sock, (void*)input, strlen(input),
+		sendto_w_err(sock, (void*)input, strlen(input),
 				(*res)->ai_addr, (*res)->ai_addrlen);
 	}
 
 	if(0 == tcp){
-		result = recv_w_err(sock, (void*)*response_buffer, response_size);
+		recv_w_err(sock, (void*)*response_buffer, response_size);
 	}
 	else{
-		result = recvfrom_w_err(sock,(void*)response_buffer, response_size);
+		recvfrom_w_err(sock,(void*)response_buffer, response_size);
 	}
 	
 	if(-1 == close(sock)){
@@ -204,7 +201,7 @@ int main(int argc, char* argv[]){
 				   || 0 == strncmp(input,	"sun",			10)
 				   || 0 == strncmp(input,	"sunday",			10)
 				   ){
-				char * response = (char*)malloc(sizeof(char) * 20);
+				char * response = (char*)malloc(sizeof(char) * response_size);
 				
 				result = connect_and_request(input, &response);
 				if(result != 0){
@@ -220,14 +217,31 @@ int main(int argc, char* argv[]){
 				memset(&input, '\0', sizeof(input));
 
 			}
-			else if(0 == strncmp(input, "q", 12) || 
-					0 == strncmp(input, "quit", 12)){
+			else if(0 == strncmp(input, "a", 10) ||
+				   0 ==	strncmp(input, "all", 10)){
+				char *response = (char *)malloc(sizeof(char)* response_size);
+				result = connect_and_request(input, &response);
+				printf("%s\n", response);
+				
+				free(response);
+				response = NULL;
+
+				memset(&input, '\0', sizeof(input));
+			}
+			else if(0 == strncmp(input, "q", 10) || 
+					0 == strncmp(input, "quit", 10)){
 				printf("Exiting...\n");
-				result = send_w_err(sock, "q", 1);
+				
+				char *response = (char *)malloc(sizeof(char)*response_size);
+				result = connect_and_request(input, &response);
+
 				if(-1 == result){
 					fprintf(stderr,"Error[10]: Failed to tell server to quit\n");
 					return -10;
 				}
+
+				free(response);
+				response = NULL;
 				proceed = 0;
 			}
 			else{
