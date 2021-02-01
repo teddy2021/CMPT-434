@@ -183,5 +183,5 @@ fi
 
 if [ -e "out.txt" -o -e "out2.txt" ];
 then
-	rm -f out*.txt
+	rm -f out*
 fi
