@@ -33,7 +33,10 @@ struct addrinfo *hints;
 struct addrinfo **res;
 int serv_sock = 0, sock = 0, client_sock = 0;
 int tcp;
-extern const int response_size, offset;
+struct sockaddr * server;
+socklen_t * serv_len;
+extern const int response_size; 
+extern const int offset;
 
 int cleanup(){
 	if(client_sock != 0){
@@ -94,6 +97,9 @@ int setup(){
 
 	}
 
+	server = (**res).ai_addr;
+	serv_len = &(**res).ai_addrlen;
+
 	struct addrinfo * p;
 	char ipstr[INET6_ADDRSTRLEN];
 	for(p = *res; p != NULL; p = p->ai_next){
@@ -115,11 +121,21 @@ int setup(){
 
 	// obtain a socket to server
 	serv_sock = socket((*res)->ai_family, (*res)->ai_socktype, (*res)->ai_protocol);
-	if(-1 == sock){
+	if(-1 == serv_sock){
 		fprintf(stderr, "Error[27]: could not create host socket\n"
 				"\t'%s'\n", strerror(errno));
 		cleanup();
 		return -27;
+	}
+
+
+	if(0 == tcp){
+		if(-1 == connect(serv_sock, (*res)->ai_addr, (*res)->ai_addrlen)){
+			fprintf(stderr,"Error[27.2]: could not connect to server\n"
+					"\t'%s'\n", strerror(errno));
+			cleanup();
+			return -27;
+		}
 	}
 
 	int serv_val = atoi(service);
@@ -134,16 +150,6 @@ int setup(){
 
 	}
 	
-	char hostbuffer[256], *IPbuffer;
-	struct hostent * host_entry;
-
-	gethostname(hostbuffer, sizeof(hostbuffer));
-	host_entry = gethostbyname(hostbuffer);
-	IPbuffer = inet_ntoa(*((struct in_addr*) host_entry->h_addr_list[0]));
-
-	printf("Proxy IP: %s\nProxy Port: %s\n", 
-			IPbuffer, service);
-	fflush(stdout);
 
 	for(p = *res; p != NULL; p = p->ai_next){
 		void *addr;
@@ -169,6 +175,7 @@ int setup(){
 		cleanup();
 		return -29;
 	}
+
 	int optval = 1;
 	if( -1 == setsockopt(
 			sock,
@@ -181,13 +188,43 @@ int setup(){
 		cleanup();
 		return -30;
 	}
+
+	char hostbuffer[256], *IPbuffer;
+	struct hostent * host_entry;
+
+	gethostname(hostbuffer, sizeof(hostbuffer));
+	host_entry = gethostbyname(hostbuffer);
+	IPbuffer = inet_ntoa(*((struct in_addr*) host_entry->h_addr_list[0]));
+
+	printf("Proxy IP: ");
+	printf("%s\n", IPbuffer);
+   	printf("Proxy Port: ");
+	printf("%s\n", service);
+	fflush(stdout);
+
 	// bind socket to self
 	if(-1 == bind(sock, (*res)->ai_addr, (*res)->ai_addrlen)){
-		fprintf(stderr, "Error[31]: could not bind host socket\n"
+		fprintf(stderr, "Error[31]: could not bind self socket\n"
 				"\t'%s'\n", strerror(errno));
 		cleanup();
 		return -31;
 	}
+
+	if(0 == tcp){
+		if(-1 == listen(sock, 10)){
+			fprintf(stderr, "Error[32]: Failed to listen for incoming connections\n"
+					"\t'%s'\n", strerror(errno));
+			cleanup();
+			return -32;
+		}
+		// Accept a new connection
+		
+		struct sockaddr_storage response_addr;
+		socklen_t addrlen = sizeof(response_addr);
+		client_sock = accept(sock, (struct sockaddr *)&response_addr, 
+				&addrlen);
+	}
+
 
 	return 0;
 }
@@ -205,9 +242,9 @@ int lookup(char * req){
 			|| 0 == strncmp(req, "fri", 10) 
 			|| 0 == strncmp(req, "friday", 10)
 			|| 0 == strncmp(req, "sat", 10) 
-			|| strncmp(req, "saturday", 10)
+			|| 0 == strncmp(req, "saturday", 10)
 			|| 0 == strncmp(req, "sun", 10) 
-			|| strncmp(req, "sunday", 10)
+			|| 0 == strncmp(req, "sunday", 10)
 	  ){
 		return 1;
 	}
@@ -229,20 +266,11 @@ int lookup(char * req){
 
 int serve(){
 	int should_close = 1;
-	struct sockaddr_storage response_addr;
-
+	struct sockaddr *client = (struct sockaddr*)malloc(sizeof(struct sockaddr));
+	memset(client, 0, sizeof(struct sockaddr));
+	socklen_t * client_len = (socklen_t *)malloc(sizeof(socklen_t));
 	while(1 == should_close){
 		// await incoming connections
-		if(-1 == listen(sock, 10)){
-			fprintf(stderr, "Error[32]: Failed to listen for incoming connections\n"
-					"\t'%s'\n", strerror(errno));
-			cleanup();
-			return -32;
-		}
-		// Accpet a new connection
-		socklen_t addrlen = sizeof(response_addr);
-		client_sock = accept(sock, (struct sockaddr *)&response_addr, 
-					&addrlen);
 		if(-1 == client_sock){
 			fprintf(stderr, "Error[33]: Failed to accept incoming connection\n"
 					"\t'%s'\n", strerror(errno));
@@ -250,12 +278,6 @@ int serve(){
 			return -33;
 		}
 
-		if(-1 == connect(serv_sock, (*res)->ai_addr, (*res)->ai_addrlen)){
-			fprintf(stderr,"Error[27.2]: could not connect to server\n"
-					"\t'%s'\n", strerror(errno));
-			cleanup();
-			return -27;
-		}
 		// create a buffer for incoming requests
 		char  request[10];
 		memset(request, '\0', 10);
@@ -264,7 +286,8 @@ int serve(){
 			result = recv_w_err(client_sock, request, 10);
 		}
 		else{
-			result = recvfrom_w_err(client_sock, request, 10);
+			result = recvfrom_w_err(sock, request, 10,
+					client, client_len);
 		}
 		if(-1 != result){
 			// check the request for 1 of 4 conditions
@@ -287,8 +310,8 @@ int serve(){
 				}
 				else{
 					printf("Sending quit signal to server...\n");
-					result = sendto_w_err(serv_sock, request, len, 
-							NULL, 0);
+					result = sendto_w_err(sock, request, len, 
+							server, *serv_len);
 				}
 				if( -1 == result ){
 					fprintf(stderr, "Error[36]: Failed to send quit signal from"
@@ -307,7 +330,6 @@ int serve(){
 					"mon", "tues", "wed", "thurs", "fri", "sat", "sun"
 				};
 				char * response = (char *)malloc(sizeof(char)*response_size);
-
 				memset(response, '\0', response_size);
 				strncpy(response, "Temperature(deg. C)\tPrecip\n", 
 						strlen("Temperature(deg. C)\tPrecip\n")+1);
@@ -325,8 +347,8 @@ int serve(){
 						result = send_w_err(serv_sock, days[i], len);
 					}
 					else{
-						result = sendto_w_err(serv_sock, days[i], len,
-								NULL, 0);
+						result = sendto_w_err(sock, days[i], len,
+								server, *serv_len);
 					}
 					if( -1 == result ){
 						fprintf(
@@ -340,7 +362,8 @@ int serve(){
 						result = recv_w_err(serv_sock, temp, response_size);
 					}
 					else{
-						result = recvfrom_w_err(serv_sock, temp, response_size);
+						result = recvfrom_w_err(sock, temp, response_size,
+								server, serv_len);
 					}
 					if(-1 == result){
 						fprintf(stderr,
@@ -352,9 +375,8 @@ int serve(){
 					else{
 						strncat(response, days[i], strlen(days[i]) + 1);
 						strncat(response, "\n", 4);
-						strncat(response, temp, 5);
-						strncat(response, "\t\t", 4);
-						strncat(response, &(temp[4]), 5);
+						strncat(response, temp + offset, 8);
+						strncat(response, "\n", 2);
 
 						//above results in response at this iteration 'idx'having
 						// '\n$day\t$temp\t$precip' added to the buffer
@@ -367,9 +389,9 @@ int serve(){
 							response, strlen(response));
 				}
 				else{
-					result = sendto_w_err(client_sock, 
+					result = sendto_w_err(sock, 
 							response, strlen(response),
-							NULL, 0);
+							client, *client_len);
 				}
 				if(-1 == send_w_err(client_sock, response, strlen(response))){
 					fprintf(stderr, 
@@ -383,6 +405,7 @@ int serve(){
 			// passthrough condition
 			else if(1 == result){
 				char * response = (char *)malloc(sizeof(char) * response_size);
+				memset(response, '\0', response_size);
 				if(0 == tcp){
 					result = send_w_err(
 						serv_sock, 
@@ -391,11 +414,11 @@ int serve(){
 						);
 				}
 				else{
-					result = sendto_w_err(serv_sock, 
+					result = sendto_w_err(sock, 
 							request,
 							strlen(request), 
-							NULL,
-							0);
+							server,
+							*serv_len);
 				}
 				if(-1 == result){
 
@@ -411,8 +434,9 @@ int serve(){
 								response, response_size);
 					}
 					else{
-						result = recvfrom_w_err(serv_sock, 
-								response, response_size);
+						result = recvfrom_w_err(sock, 
+								response, response_size,
+								server, serv_len);
 					}
 					if(-1 == result){
 						fprintf(stderr,
@@ -426,10 +450,8 @@ int serve(){
 								client_sock, response, strlen(response));
 						}
 						else{
-							result = sendto_w_err(
-									client_sock, response, strlen(response),
-									NULL, 0
-									);
+							result = sendto_w_err(sock, response, strlen(response),
+									client, *client_len);
 						}
 
 						if(-1 == result){
@@ -453,9 +475,9 @@ int serve(){
 							strlen("Erroneous request\n"));
 				}
 				else{
-					sendto_w_err(client_sock, "Erroneous request\n",
+					sendto_w_err(sock, "Erroneous request\n",
 							strlen("Erroneous request\n"),
-							NULL, 0);
+							client, *client_len);
 				}
 			}
 

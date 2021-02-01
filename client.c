@@ -34,6 +34,15 @@ extern const int response_size;
 int tcp;
 int sock;
 
+int cleanup(){
+	if(-1 == close(sock)){
+		fprintf(stderr, "Error[9]: Failed to close connection\n"
+				"\t'%s'\n", strerror(errno));
+		return -9;
+	}
+	freeaddrinfo(*res);
+	return 0;
+}
 
 int setup(){
 	res = (struct addrinfo **)malloc(sizeof(struct addrinfo*));
@@ -83,11 +92,13 @@ int setup(){
 		return -5;
 	}
 
+	if(0 == tcp){
 	result = connect(sock, (*res)->ai_addr, (*res)->ai_addrlen);
-	if(-1 == result){
-		fprintf(stderr, "Error[6]: could not connect to server\n"
-				"\t'%s'\n", strerror(errno));
-		return -6;
+		if(-1 == result){
+			fprintf(stderr, "Error[6]: could not connect to server\n"
+					"\t'%s'\n", strerror(errno));
+			return -6;
+		}
 	}
 
 	return 0;
@@ -107,15 +118,10 @@ int connect_and_request(char * input, char ** response_buffer){
 		recv_w_err(sock, (void*)*response_buffer, response_size);
 	}
 	else{
-		recvfrom_w_err(sock,(void*)response_buffer, response_size);
+		recvfrom_w_err(sock,(void*)response_buffer, response_size,
+				NULL, 0);
 	}
 	
-	if(-1 == close(sock)){
-		fprintf(stderr, "Error[9]: Failed to close connection\n"
-				"\t'%s'\n", strerror(errno));
-		return -9;
-	}
-	freeaddrinfo(*res);
 	return 0;
 }
 
@@ -254,6 +260,6 @@ int main(int argc, char* argv[]){
 			}
 		}
 	}
-	return 0;
+	return cleanup();
 }
 

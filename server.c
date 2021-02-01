@@ -35,6 +35,7 @@ int sock = 0;
 int client_sock = 0;
 int tcp;
 extern const int response_size;
+extern const int offset;
 
 int cleanup(){
 
@@ -148,23 +149,26 @@ int setup(){
 			IPbuffer, service);
 	fflush(stdout);
 
-	if(-1 == listen(sock, 10)){
-		fprintf(stderr, "Error[15]: Failed to listen for incoming connections\n"
-				"\t'%s'\n", strerror(errno));
-		return -14;
+	if(0 == tcp){
+		if(-1 == listen(sock, 10)){
+			fprintf(stderr, "Error[15]: Failed to listen for incoming connections\n"
+					"\t'%s'\n", strerror(errno));
+			return -14;
+		}
+
+		struct sockaddr_storage response_addr;
+		socklen_t addrlen = sizeof(response_addr);
+		
+		client_sock = accept(sock, (struct sockaddr *)&response_addr, 
+					&addrlen);
+		if(-1 == client_sock){
+			fprintf(stderr, "Error[16]: Failed to accept incoming connection\n"
+					"\t'%s'\n", strerror(errno));
+			cleanup();
+			return -15;
+		}
 	}
 
-	struct sockaddr_storage response_addr;
-	socklen_t addrlen = sizeof(response_addr);
-	
-	client_sock = accept(sock, (struct sockaddr *)&response_addr, 
-				&addrlen);
-	if(-1 == client_sock){
-		fprintf(stderr, "Error[16]: Failed to accept incoming connection\n"
-				"\t'%s'\n", strerror(errno));
-		cleanup();
-		return -15;
-	}
 
 	return 0;
 }
@@ -173,31 +177,31 @@ int lookup(char * request, char ** response){
 	char * outstr;
 	if( 0 == strncmp(request, "mon", 10) || 
 			0 == strncmp(request, "monday", 10)){
-		outstr = "\t\t12\t\t34\0";
+		outstr = "\t\t12\t\t34\n\0";
 	}
 	else if( 0 == strncmp(request, "tues", 10) ||
 			0 == strncmp(request, "tuesday", 10) ){
-		outstr = "\t\t56\t\t78\0";
+		outstr = "\t\t56\t\t78\n\0";
 	}
 	else if( 0 == strncmp(request, "wed", 10) || 
 			0 == strncmp(request, "wednesday", 10) ){
-		outstr = "\t\t91\t\t01\0";
+		outstr = "\t\t91\t\t01\n\0";
 	}
 	else if( 0 == strncmp(request, "thurs", 10) ||
 			0 == strncmp(request, "thursday", 10) ){
-		outstr = "\t\t11\t\t21\0";
+		outstr = "\t\t11\t\t21\n\0";
 	}
 	else if ( 0 == strncmp(request, "fri", 10) ||
 			0 == strncmp(request, "friday", 10)	){
-		outstr = "\t\t31\t\t41\0";
+		outstr = "\t\t31\t\t41\n\0";
 	}
 	else if ( 0 == strncmp(request, "sat", 10) ||
 			0 == strncmp(request, "saturday", 10) ){
-		outstr = "\t\t51\t\t61\0";
+		outstr = "\t\t51\t\t61\n\0";
 	}
 	else if ( 0 == strncmp(request, "sun", 10) ||
 			0 == strncmp(request, "sunday", 10)	){
-		outstr = "\t\t71\t\t81\0";
+		outstr = "\t\t71\t\t81\n\0";
 	}
 	else if ( 0 == strncmp(request, "q", 10) || 
 			0 == strncmp(request, "quit", 10)){
@@ -218,7 +222,9 @@ int lookup(char * request, char ** response){
 
 int serve(){
 	int should_close = 1;
-
+	struct sockaddr *client = (struct sockaddr *)malloc(sizeof(struct sockaddr));
+	memset(client, 0, sizeof(struct sockaddr));
+	socklen_t * client_len = (socklen_t *)malloc(sizeof(socklen_t));
 	while(1 == should_close){
 
 		char  request[10];
@@ -229,7 +235,8 @@ int serve(){
 			result = recv_w_err(client_sock, (void*)request, 10);
 		}
 		else{
-			result = recvfrom_w_err(client_sock, (void*)request, 10);
+			result = recvfrom_w_err(sock, (void*)request, 10,
+					client, client_len);
 		}
 
 		printf("Server received %s request\n", request);
@@ -254,9 +261,9 @@ int serve(){
 				send_w_err(client_sock, response, len);
 			}
 			else{
-				sendto_w_err(client_sock, 
+				sendto_w_err(sock,
 						response, len,
-						NULL, 0);
+						client, *client_len);
 			}
 			memset(response, '\0', response_size);
 		}

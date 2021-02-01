@@ -11,8 +11,10 @@ CPPFLAGS = -Wall -Wextra -g -D_POSIX_C_SOURCE=200112L -c
 EXE = client server proxy
 DOTO = client.o server.o proxy.o common.o
 
-all: server client proxy common.o
+all: common.o server client proxy 
 
+common.o: common.c
+	$(CC) $(CPPFLAGS) common.c -o common.o
 
 client: client.o common.o
 	$(CC) client.o common.o -o client
@@ -31,9 +33,6 @@ server: server.o common.o
 
 server.o: server.c
 	$(CC) $(CPPFLAGS) server.c -o server.o
-
-common.o: common.c
-	$(CC) $(CPPFLAGS) common.c -o common.o
 
 .PHONY: clean
 

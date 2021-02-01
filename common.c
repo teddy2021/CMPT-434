@@ -18,6 +18,15 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+
+const int offset = strlen("Temperature(deg. C)\tPrecipitation\n");
+const int response_size = offset 
+	+ 7 * 4 // 14 newlines and 14 tabs
+	+ 5 * 4 // 5 three letter abbvs + 1 newline character each
+	+ 2 * 5 // 2 four letter abbvs + 1 newline character each
+	+ 7 * 4; // 7 four character sequences of responses
+
+
 int send_w_err(int sock, char * message, int len){
 	int bytes_sent = 0, cumulat_sent = 0, remaining = len;
 
@@ -57,7 +66,8 @@ int recv_w_err(int sock, char * buffer, int len){
 }
 
 
-int sendto_w_err(int sock, char* message, int len, struct sockaddr *to, socklen_t to_len){
+int sendto_w_err(int sock, char* message, int len, 
+		struct sockaddr *to, socklen_t to_len){
 	int bytes_sent = 0, cumulat_sent = 0, remaining = len;
 
 	while(remaining != 0){
@@ -82,31 +92,20 @@ int sendto_w_err(int sock, char* message, int len, struct sockaddr *to, socklen_
 }
 
 
-int recvfrom_w_err(int sock, char * buffer, int len){
-	struct sockaddr from;
-	socklen_t from_len = sizeof(from);
+int recvfrom_w_err(int sock, char * buffer, int len, 
+		struct sockaddr *from, socklen_t * from_len){
 	char dst[INET_ADDRSTRLEN];
 
-	if(-1 == recvfrom(
-				sock, 
-				(void*)buffer,
-				len,
-				0,
-				&from,
-				&from_len
-				)){
+	if(-1 == recvfrom(sock,(void*)buffer, len,
+				0, from, from_len)){
+
+		inet_ntop(from->sa_family, ((struct in_addr *)from), dst, 
+				INET_ADDRSTRLEN);
 		fprintf(stderr,
 				"Error[8]: Failed to receive message from %s\n"
-				"\t'%s'\n", inet_ntop(
-					from.sa_family,
-					((struct in_addr *)&from),
-					dst, 
-					INET_ADDRSTRLEN),
-
-				strerror(errno));
+				"\t'%s'\n", dst, strerror(errno));
 		return -8;
 	}
 	return 0;
 }
-
 
